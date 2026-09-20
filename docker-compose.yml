@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tabstory
+      POSTGRES_PASSWORD: tabstory
+      POSTGRES_DB: tabstory
+    ports: ["5432:5432"]
+    volumes: ["tab_story_pg:/var/lib/postgresql/data"]
+volumes:
+  tab_story_pg:
