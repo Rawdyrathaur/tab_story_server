@@ -13,7 +13,7 @@ app.use(express.json({limit:'2mb'}));
 
 const deviceRequest=z.object({deviceId:z.string().min(1),userId:z.string().uuid().optional(),bootstrapSecret:z.string()});
 app.get('/health',(_req,res)=>res.json({ok:true}));
-app.get('/config',(_req,res)=>res.json({freeTabLimit:config.freeLimit,pullPageSize:200}));
+app.get('/config',(_req,res)=>res.json({pullPageSize:200,freeTabSaving:true,premiumFeatures:['ai-tools']}));
 app.post('/auth/device',async(req,res,next)=>{try{
   const body=deviceRequest.parse(req.body);
   if(body.bootstrapSecret!==config.bootstrapSecret)return res.status(401).json({error:'INVALID_BOOTSTRAP_SECRET'});

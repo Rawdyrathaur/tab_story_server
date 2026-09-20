@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient, Tier } from '@prisma/client'; import { z } from 'zod'; import { config } from './config.js';
+import { Prisma, PrismaClient } from '@prisma/client'; import { z } from 'zod'; import { config } from './config.js';
 export const prisma=new PrismaClient();
 const change=z.object({id:z.string().uuid(),type:z.enum(['collection','resource','note','reminder']),content:z.record(z.string(),z.unknown()),collectionId:z.string().uuid().nullable().optional(),isDeleted:z.boolean(),editedAt:z.string().datetime(),editedBy:z.string().min(1)});
 export type Change=z.infer<typeof change>;
@@ -11,10 +11,6 @@ export async function push(userId:string,deviceId:string,input:unknown){
   const result=await prisma.$transaction(async tx=>{
    const user=await tx.user.findUniqueOrThrow({where:{id:userId}}); const now=new Date(); const editedAt=new Date(Math.min(now.getTime(),new Date(candidate.editedAt).getTime()));
    const existing=await tx.record.findUnique({where:{userId_id:{userId,id:candidate.id}}});
-   if(candidate.type==='resource'&&!candidate.isDeleted&&(!existing||existing.isDeleted)&&user.tier===Tier.free){
-    const count=await tx.record.count({where:{userId,type:'resource',isDeleted:false}});
-    if(count>=config.freeLimit){await tx.limitHit.create({data:{userId,itemId:candidate.id}});return {rejected:{id:candidate.id,code:'LIMIT_REACHED',limit:config.freeLimit}};}
-   }
    if(existing&&existing.editedAt>editedAt)return {row:existing};
    const bumped=await tx.user.update({where:{id:userId},data:{nextServerVersion:{increment:1}},select:{nextServerVersion:true}});
    const row=await tx.record.upsert({where:{userId_id:{userId,id:candidate.id}},create:{userId,id:candidate.id,type:candidate.type,content:json(candidate.content),collectionId:candidate.collectionId,isDeleted:candidate.isDeleted,editedAt,editedBy:deviceId,serverVersion:bumped.nextServerVersion},update:{type:candidate.type,content:json(candidate.content),collectionId:candidate.collectionId,isDeleted:candidate.isDeleted,editedAt,editedBy:deviceId,serverVersion:bumped.nextServerVersion}});
