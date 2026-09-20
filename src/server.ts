@@ -18,10 +18,10 @@ app.post('/auth/device',async(req,res,next)=>{try{
   const body=deviceRequest.parse(req.body);
   if(body.bootstrapSecret!==config.bootstrapSecret)return res.status(401).json({error:'INVALID_BOOTSTRAP_SECRET'});
   const userId=body.userId??crypto.randomUUID();
-  await prisma.user.upsert({where:{id:userId},create:{id:userId},update:{}});
+  const user=await prisma.user.upsert({where:{id:userId},create:{id:userId},update:{},select:{tier:true}});
   const claims={userId,deviceId:body.deviceId}; const refresh=refreshToken(claims);
   await prisma.device.upsert({where:{userId_id:{userId,id:body.deviceId}},create:{userId,id:body.deviceId,refreshTokenHash:await hashToken(refresh)},update:{refreshTokenHash:await hashToken(refresh)}});
-  res.json({userId,deviceId:body.deviceId,accessToken:accessToken(claims),refreshToken:refresh});
+  res.json({userId,deviceId:body.deviceId,tier:user.tier,accessToken:accessToken(claims),refreshToken:refresh});
 }catch(error){next(error)}});
 
 const server=http.createServer(app);
