@@ -3,7 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import { Server } from 'socket.io';
 import { ZodError, z } from 'zod';
-import { accessToken, hashToken, matchesToken, refreshToken, verifyAccess, verifyRefresh, type Claims } from './auth.js';
+import { accessToken, googleUserId, hashToken, matchesToken, refreshToken, verifyAccess, verifyGoogleCredential, verifyRefresh, type Claims } from './auth.js';
 import { config } from './config.js';
 import { prisma, pull, purgeTombstones, push } from './sync.js';
 
@@ -14,6 +14,7 @@ app.use(cors({origin:allowOrigin,credentials:true}));
 app.use(express.json({limit:'2mb'}));
 
 const deviceRequest=z.object({deviceId:z.string().trim().min(1).max(128),userId:z.string().uuid().optional(),bootstrapSecret:z.string().min(32).max(512)});
+const googleRequest=z.object({deviceId:z.string().trim().min(1).max(128),credential:z.string().min(20).max(10000),credentialType:z.enum(['id_token','access_token'])});
 const pushSubscription=z.object({endpoint:z.string().url().max(4096),expirationTime:z.number().nullable().optional(),keys:z.object({p256dh:z.string().min(1).max(512),auth:z.string().min(1).max(512)})}).strict();
 const syncPayload=z.object({changes:z.unknown().optional(),cursor:z.string().regex(/^\d+$/).optional(),skipHorizon:z.boolean().optional()}).default({});
 const authAttempts=new Map<string,{count:number;resetAt:number}>();
@@ -26,7 +27,7 @@ const authRateLimit=(req:express.Request,res:express.Response,next:express.NextF
 const health=async(_req:express.Request,res:express.Response)=>{try{await prisma.$queryRaw`SELECT 1`;res.status(200).json({ok:true});}catch{res.status(503).json({ok:false});}};
 app.get('/healthz',health);
 app.get('/health',health);
-app.get('/config',(_req,res)=>res.json({pullPageSize:200,freeTabSaving:true,premiumFeatures:['ai-tools']}));
+app.get('/config',(_req,res)=>res.json({pullPageSize:200,freeTabSaving:true,premiumFeatures:['ai-tools'],googleClientId:config.googleClientId}));
 app.post('/auth/device',authRateLimit,async(req,res,next)=>{try{
   const body=deviceRequest.parse(req.body);
   if(body.bootstrapSecret!==config.bootstrapSecret)return res.status(401).json({error:'INVALID_BOOTSTRAP_SECRET'});
@@ -36,6 +37,12 @@ app.post('/auth/device',authRateLimit,async(req,res,next)=>{try{
   await prisma.device.upsert({where:{userId_id:{userId,id:body.deviceId}},create:{userId,id:body.deviceId,refreshTokenHash:await hashToken(refresh)},update:{refreshTokenHash:await hashToken(refresh)}});
   res.json({userId,deviceId:body.deviceId,tier:user.tier,accessToken:accessToken(claims),refreshToken:refresh});
 }catch(error){next(error)}});
+app.post('/auth/google',authRateLimit,async(req,res,next)=>{try{
+  if(!config.googleClientIds.length)return res.status(503).json({error:'GOOGLE_SIGN_IN_NOT_CONFIGURED'});
+  const body=googleRequest.parse(req.body); const identity=await verifyGoogleCredential(body.credential,body.credentialType); const userId=googleUserId(identity.subject); const user=await prisma.user.upsert({where:{id:userId},create:{id:userId},update:{},select:{tier:true}}); const claims={userId,deviceId:body.deviceId}; const refresh=refreshToken(claims);
+  await prisma.device.upsert({where:{userId_id:{userId,id:body.deviceId}},create:{userId,id:body.deviceId,refreshTokenHash:await hashToken(refresh)},update:{refreshTokenHash:await hashToken(refresh)}});
+  res.json({userId,deviceId:body.deviceId,tier:user.tier,accessToken:accessToken(claims),refreshToken:refresh,email:identity.email,name:identity.name,authProvider:'google'});
+}catch(error){if(error instanceof Error&&error.message.startsWith('GOOGLE_'))return res.status(401).json({error:'GOOGLE_SIGN_IN_FAILED'});next(error)}});
 
 const server=http.createServer(app);
 const io=new Server(server,{transports:['websocket'],cors:{origin:config.origins,credentials:true},maxHttpBufferSize:2_000_000});
